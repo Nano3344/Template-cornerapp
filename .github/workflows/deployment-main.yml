@@ -1,0 +1,161 @@
+# This is a basic workflow to help you get started with Actions
+
+name: Deployment - Main
+
+# Controls when the action will run. Triggers the workflow on push or pull request
+# events but only for the development branch
+on:
+  push:
+    branches: 
+      - 'main'
+
+defaults:
+  run:
+    shell: bash
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  predeploy:
+    # The type of runner that the job will run on
+    runs-on: "ubuntu-latest"
+    env: # Or as an environment variable
+      SHOPIFY_DOMAIN: ${{ secrets.SHOPIFY_DOMAIN }}
+      SHOPIFY_USERNAME: ${{ secrets.SHOPIFY_USERNAME }}
+      SHOPIFY_PASSWORD: ${{ secrets.SHOPIFY_PASSWORD }}
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v2
+      - name: Set up Python 3.x
+        uses: actions/setup-python@v2
+        with:
+          # Semantic version range syntax or exact version of a Python version
+          python-version: '3.x' 
+      - name: Display Python version
+        run: python -c "import sys; print(sys.version)"
+      - uses: actions/cache@v2
+        id: pip-cache
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Run predeploy script
+        run: python shopify-predeploy.py $SHOPIFY_DOMAIN $SHOPIFY_USERNAME $SHOPIFY_PASSWORD Production
+      - name: Archive predeploy logs
+        uses: actions/upload-artifact@v2
+        with:
+          name: logs
+          path: connection.log
+      - name: Archive predeploy results
+        uses: actions/upload-artifact@v2
+        with:
+          name: predeploy-files
+          path: |
+            src/config**
+            src/new-theme.name
+            preview-link.txt
+  deploy:
+    runs-on: "ubuntu-latest"
+    container: solislab/shopify-ci
+    env: # Or as an environment variable
+      SHOPIFY_DOMAIN: ${{ secrets.SHOPIFY_DOMAIN }}
+      SHOPIFY_USERNAME: ${{ secrets.SHOPIFY_USERNAME }}
+      SHOPIFY_PASSWORD: ${{ secrets.SHOPIFY_PASSWORD }}
+    needs: predeploy
+    steps:
+      - uses: actions/checkout@v2
+      - name: Download a single artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: predeploy-files
+      - name: Deploy
+        run: |
+          theme update
+          cd src
+          if test -f "new-theme.name"; then
+              echo "new-theme.name file found. Creating a new theme."
+              mapfile < new-theme.name
+              theme new -p=$SHOPIFY_PASSWORD -s=$SHOPIFY_DOMAIN -n="${MAPFILE[@]}" --allow-live
+          else
+              theme deploy -e=Production --allow-live
+          fi
+
+ 
+  # The following two jobs can be used as template for the deployment to multiple server
+  # Instructions: 1. Replace XY with a unique number for the targeted store.
+  #               2. Add the edited code to the job list.
+  #
+  ### COPY FROM HERE ###
+  #
+  # predeploy_XY:
+  #   runs-on: "ubuntu-latest"
+  #   env:
+  #     SHOPIFY_DOMAIN: ${{ secrets.SHOPIFY_DOMAIN_XY }}
+  #     SHOPIFY_USERNAME: ${{ secrets.SHOPIFY_USERNAME_XY }}
+  #     SHOPIFY_PASSWORD: ${{ secrets.SHOPIFY_PASSWORD_XY }}
+  #   steps:
+  #     # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+  #     - uses: actions/checkout@v2
+  #     - name: Set up Python 3.x
+  #       uses: actions/setup-python@v2
+  #       with:
+  #         python-version: '3.x' 
+  #     # Setup cache for dependencies
+  #     - uses: actions/cache@v2
+  #       id: pip-cache
+  #       with:
+  #         path: ~/.cache/pip
+  #         key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+  #         restore-keys: |
+  #           ${{ runner.os }}-pip-
+  #     - name: Install dependencies
+  #       run: |
+  #         python -m pip install --upgrade pip
+  #         pip install -r requirements.txt
+  #     - name: Run predeploy script
+  #       run: python shopify-predeploy.py $SHOPIFY_DOMAIN $SHOPIFY_USERNAME $SHOPIFY_PASSWORD Production
+  #     - name: Archive predeploy logs
+  #       uses: actions/upload-artifact@v2
+  #       with:
+  #         name: logs
+  #         path: connection.log
+  #     - name: Archive predeploy results
+  #       uses: actions/upload-artifact@v2
+  #       with:
+  #         name: predeploy-files
+  #         path: |
+  #           src/config**
+  #           src/new-theme.name
+  #           preview-link.txt
+  # deploy_XY:
+  #   runs-on: "ubuntu-latest"
+  #   container: solislab/shopify-ci
+  #   env:
+  #     SHOPIFY_DOMAIN: ${{ secrets.SHOPIFY_DOMAIN }}
+  #     SHOPIFY_USERNAME: ${{ secrets.SHOPIFY_USERNAME }}
+  #     SHOPIFY_PASSWORD: ${{ secrets.SHOPIFY_PASSWORD }}
+  #   needs: predeploy_XY
+  #   steps:
+  #     - uses: actions/checkout@v2
+  #     - name: Download a single artifact
+  #       uses: actions/download-artifact@v2
+  #       with:
+  #         name: predeploy-files
+  #     - name: Deploy
+  #       run: |
+  #         theme update
+  #         cd src
+  #         if test -f "new-theme.name"; then
+  #             echo "new-theme.name file found. Creating a new theme."
+  #             mapfile < new-theme.name
+  #             theme new -p=$SHOPIFY_PASSWORD -s=$SHOPIFY_DOMAIN -n="${MAPFILE[@]}" --allow-live
+  #         else
+  #             theme deploy -e=${GITHUB_REF#refs/heads/} --allow-live
+  #         fi
+  #
+  ### COPY UNTIL HERE ###
